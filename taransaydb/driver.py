@@ -106,7 +106,12 @@ class DirectoryDriver:
         pivot_time = tick.time()
         pivot_passed = False
 
-        for line in self._read_lines(fp_existing):
+        for line in self._read_raw_lines(fp_existing):
+            if pivot_passed or self._is_meta_line(line):
+                # Just copy the line directly.
+                fp_temp.file.write(line + "\n")
+                continue
+
             line_time, line_data = self._parse_line_time(line)
 
             if line_time > pivot_time:
@@ -116,17 +121,6 @@ class DirectoryDriver:
 
             # Copy the existing line into the new file.
             fp_temp.file.write(line + "\n")
-
-            if pivot_passed:
-                # Quickly write the rest of the chunks.
-                while True:
-                    data = fp_existing.read(1024)
-                    if not data:
-                        break
-                    fp_temp.file.write(data)
-
-                # We're done.
-                break
 
         if not pivot_passed:
             # The insert line is at the end.
@@ -150,6 +144,9 @@ class DirectoryDriver:
         return (
             self.path / f"{date.year:04d}" / f"{date.month:02d}" / f"{date.day:02d}.txt"
         )
+
+    def _is_meta_line(self, line):
+        return not line or line.strip().startswith("#")
 
     def _read_raw_lines(self, fp, reverse=False, buf_size=8192):
         """Memory-efficient, reversible line reader.
@@ -203,8 +200,7 @@ class DirectoryDriver:
 
     def _read_lines(self, *args, **kwargs):
         for line in self._read_raw_lines(*args, **kwargs):
-            if not line or line.strip().startswith("#"):
-                # Skip empty or comment line.
+            if self._is_meta_line(line):
                 continue
 
             yield line
