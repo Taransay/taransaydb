@@ -6,7 +6,7 @@ def test_append(float_device, faker):
     append_data = [faker.pyfloat(), faker.pyfloat()]
 
     with float_device.writer() as driver:
-        driver.append_data(append_datetime, append_data)
+        driver.append(append_datetime, append_data)
 
     with float_device.reader() as driver:
         # Query to 1 second after so the data point is returned.

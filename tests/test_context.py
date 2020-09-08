@@ -7,7 +7,7 @@ def test_iterator_out_of_context_throws_error(float_device, faker):
     append_datetime = faker.date_time()
 
     with float_device.writer() as driver:
-        driver.append_data(faker.date_time(), [faker.pyfloat()])
+        driver.append(faker.date_time(), [faker.pyfloat()])
 
     with float_device.reader() as driver:
         # Query to 1 second after so the data point is returned.
@@ -37,4 +37,4 @@ def test_append_not_allowed_in_read_context(float_device, faker):
         with pytest.raises(
             ProgrammingError, match=r"not opened in a way that supports appending"
         ):
-            driver.append_data(append_datetime, [faker.pyfloat()])
+            driver.append(append_datetime, [faker.pyfloat()])

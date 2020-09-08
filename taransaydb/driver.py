@@ -65,7 +65,7 @@ class DirectoryDriver:
 
         return Cursor.from_range(self, start, stop)
 
-    def append_data(self, tick, data):
+    def append(self, tick, data):
         if DriverAccessType.APPEND not in self.access_type:
             # Incorrect access type for this driver.
             raise ProgrammingError(

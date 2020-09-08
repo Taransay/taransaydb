@@ -11,7 +11,7 @@ def regular_interval_data_device(test_device, faker):
 
     with test_device.writer() as driver:
         for tick, value in faker.time_series(start, stop, interval):
-            driver.append_data(tick, [value])
+            driver.append(tick, [value])
 
     with test_device.reader() as driver:
         yield driver, start, stop, interval
@@ -31,7 +31,7 @@ def test_stop_same_as_start_is_always_empty(test_device, faker):
     some_datetime = faker.date_time()
 
     with test_device.writer() as driver:
-        driver.append_data(some_datetime, [faker.pyfloat()])
+        driver.append(some_datetime, [faker.pyfloat()])
 
     with test_device.reader() as driver:
         result = driver.query_interval(some_datetime, some_datetime)
