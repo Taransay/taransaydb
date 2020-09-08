@@ -1,6 +1,8 @@
 # TaransayDB
 Serverless, file-based, zero-configuration, zero-dependency, embeddable Python time series database.
 
+*Note: TaransayDB is currently in alpha development and not yet suitable for use in other projects.*
+
 TaransayDB is good at storing times and corresponding values such as sensor readings, GPS tracks or
 system states. Its organisation is pretty much as simple as it gets: each database starts with a top
 level directory on the file system with the name of the database. Each device you want to handle is
