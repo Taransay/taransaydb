@@ -1,0 +1,10 @@
+{
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true,
+    "editor.rulers": [100],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "[markdown]": {
+        "files.trimTrailingWhitespace": false
+    },
+}
