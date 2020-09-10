@@ -28,8 +28,7 @@ developers using it:
   times are later than the latest at the end of the file. If your or your application can't
   guarantee this, you can still call a maintenance task later to fix misordering asynchronously.
 - *No handling of metadata.* Your application is responsible for knowing which columns correspond to
-  which readings, and each column's datatype. If you like, you can add comments on their own lines
-  starting with `#` and these, along with empty lines, will be completely ignored by TaransayDB.
+  which readings, and each column's datatype.
 - *No read/write locks other than what your file system provides.* Don't run multiple instances of
   TaransayDB writing to the same underlying directories unless you know what you're doing.
 
