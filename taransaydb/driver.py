@@ -3,7 +3,6 @@
 import os
 from enum import Flag, auto
 from pathlib import Path
-from shutil import copyfile
 from tempfile import NamedTemporaryFile
 from heapq import merge
 from datetime import datetime, time, timedelta
@@ -78,7 +77,7 @@ class DirectoryDriver:
         shard_path = self._shard_path(tick.date())
 
         fp = self._shard_stream(shard_path, DriverAccessType.APPEND, create=True)
-        fp.write(self._format_line(tick, data))
+        fp.write(self._format_line(tick.time(), data))
 
     def insert(self, tick, data):
         """Insert data in order.
@@ -106,9 +105,9 @@ class DirectoryDriver:
         # Ensure buffered data is written.
         fp_existing.flush()
 
-        insert_line = self._format_line(tick, data)
         pivot_time = tick.time()
         pivot_passed = False
+        insert_line = self._format_line(pivot_time, data)
 
         for line in self._read_lines(fp_existing):
             if pivot_passed:
@@ -131,9 +130,11 @@ class DirectoryDriver:
             fp_temp.file.write(insert_line)
 
         # Substitute the shard with the temporary buffer.
-        self._shard_stream_replace_cache(fp_existing, fp_temp, shard_path)
-        # Delete the temporary file.
-        fp_temp.close()
+        self._shard_replace(fp_existing, fp_temp)
+
+    def sort(self):
+        for shard_path in self._shard_paths():
+            self._sort_shard(shard_path)
 
     def _sort_shard(self, shard_path):
         """Sort day file.
@@ -157,56 +158,69 @@ class DirectoryDriver:
         # Ensure buffered data is written.
         fp_existing.flush()
 
+        heap_paths = []
+
         def subsort_file(fp):
             """Sort a file using heapsort.
 
             Returns a list of sorted, open temporary file pointers.
             """
-            lines = self._read_lines(fp)
+            # Open two files: one for sorted lines, one for unsorted. The sorted file is not deleted
+            # on close, but rather deleted later when we merge it into the main file. The unsorted
+            # file is deleted at the end of this method.
+            with NamedTemporaryFile(
+                mode="r+",
+                prefix=f"{fp_existing.name}_sorted",
+                dir=str(shard_path.parent),
+                delete=False,
+            ) as sub_fp_sorted, NamedTemporaryFile(
+                mode="r+",
+                prefix=f"{fp_existing.name}_unsorted",
+                dir=str(shard_path.parent),
+                delete=True,
+            ) as sub_fp_unsorted:
+                last_time = None
+                has_unsorted = False
 
-            try:
-                line = next(lines)
-            except StopIteration:
-                # There are no lines in this file, so there's nothing to do.
-                return []
+                for line in self._read_lines(fp):
+                    line_time, line_data = self._parse_line_time(line)
 
-            sub_fp_sorted = NamedTemporaryFile(
-                mode="w", prefix=fp_existing.name, dir=str(shard_path.parent)
-            )
-            sub_fp_unsorted = NamedTemporaryFile(
-                mode="w", prefix=fp_existing.name, dir=str(shard_path.parent)
-            )
+                    # Choose whether to write this line into the sorted or unsorted file.
+                    if last_time is None or line_time > last_time:
+                        target = sub_fp_sorted
+                        # Update the last sorted time.
+                        last_time = line_time
+                    else:
+                        target = sub_fp_unsorted
+                        has_unsorted = True
 
-            # The first line is always assumed to be sorted.
-            last_time, line_data = self._parse_line_time(line)
-            sub_fp_sorted.write(self._format_line(last_time, line_data))
+                    target.write(self._format_line(line_time, line_data))
 
-            for line in lines:
-                line_time, line_data = self._parse_line_time(line)
-                target = sub_fp_sorted if line_time > last_time else sub_fp_unsorted
-                target.write(self._format_line(line_time, line_data))
-                last_time = line_time
+                heap_paths.append(Path(sub_fp_sorted.name))
 
-            # Sort unsorted heap and chain results into one list.
-            return [sub_fp_sorted] + subsort_file(sub_fp_unsorted)
+                if has_unsorted:
+                    subsort_file(sub_fp_unsorted)
 
-        # Get sorted subfile pointers.
-        sorted_subfiles = subsort_file(fp_existing)
+        subsort_file(fp_existing)
+
+        # Open the heap files for reading.
+        heap_files = [heap_path.open() for heap_path in heap_paths]
 
         # Merge the sorted subfiles and write to buffer.
-        merged_lines = merge(sorted_subfiles)
+        merged_lines = merge(*heap_files, key=self._parse_line_time)
+
         fp_temp.writelines(merged_lines)
 
-        # Substitute the shard with the temporary buffer.
-        self._shard_stream_replace_cache(fp_existing, fp_temp, shard_path)
-
         # Delete the temporary files.
-        fp_temp.close()
-        for tmp_file in sorted_subfiles:
-            tmp_file.close()
+        for heap_file, heap_path in zip(heap_files, heap_paths):
+            heap_file.close()
+            heap_path.unlink()
 
-    def _format_line(self, tick, data):
-        return " ".join([str(tick.time())] + self._format_data(data)) + "\n"
+        # Overwrite the unsorted shard with the temporary buffer.
+        self._shard_replace(fp_existing, fp_temp)
+
+    def _format_line(self, tick_time, data):
+        return " ".join([str(tick_time)] + self._format_data(data)) + "\n"
 
     @property
     def path(self):
@@ -216,6 +230,9 @@ class DirectoryDriver:
         return (
             self.path / f"{date.year:04d}" / f"{date.month:02d}" / f"{date.day:02d}.txt"
         )
+
+    def _shard_paths(self):
+        return self.path.glob("**/*.txt")
 
     def _read_lines(self, fp, reverse=False, buf_size=8192):
         """Memory-efficient, reversible line reader.
@@ -330,30 +347,41 @@ class DirectoryDriver:
 
         The real shard stream is the same one returned by :class:`._shard_stream`. The temporary one
         has the same path and filename except with ".tmp" appended. The temporary buffer is
-        write-only. Once closed, the temporary file is deleted.
+        write-only, and it is up to the user to delete the file if/when needed.
         """
         fp_real = self._shard_stream(shard_path, *args, **kwargs)
         fp_temp = NamedTemporaryFile(
-            mode="w", prefix=shard_path.name, dir=str(shard_path.parent)
+            mode="w", prefix=shard_path.name, dir=str(shard_path.parent), delete=False
         )
 
         return fp_real, fp_temp
 
-    def _shard_stream_replace_cache(self, fp_cached, fp_replacement, cached_path):
-        """Overwrite `fp_cached` file object's file with `fp_replacement` file object's contents."""
+    def _shard_replace(self, fp_cached, fp_replacement):
+        """Rename the file `fp_replacement` represents to the path that `fp_cached` represents.
+
+        The renamed file is cached and reopened in the same mode as the file that `fp_cached`
+        represents. Both file pointers are closed by this method.
+        """
+        cached_path = Path(fp_cached.name)
+
+        assert cached_path in self._file_cache
         assert not fp_cached.closed
         assert cached_path == Path(fp_cached.name)
 
+        replacement_path = Path(fp_replacement.name)
+
+        # Close the files.
         fp_cached.close()
+        fp_replacement.close()
 
-        # Finish writing data.
-        fp_replacement.flush()
+        # Both files should still exist.
+        assert cached_path.is_file()
+        assert replacement_path.is_file()
 
-        # Overwrite the original file's contents with that of the temporary file.
-        # This uses a memory-optimised copy operation starting from Python 3.8.
-        copyfile(fp_replacement.name, fp_cached.name)
+        # Rename.
+        replacement_path.rename(cached_path)
 
-        # Re-open.
+        # Re-open with the original mode.
         self._file_cache[cached_path] = cached_path.open(fp_cached.mode)
 
     def __str__(self):
