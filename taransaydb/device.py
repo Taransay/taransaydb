@@ -24,6 +24,10 @@ class Device:
         yield ctx_driver
         ctx_driver.close()
 
+    def sort(self):
+        with self.writer() as driver:
+            driver.sort()
+
     def __str__(self):
         return self.name
 

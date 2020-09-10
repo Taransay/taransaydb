@@ -5,6 +5,7 @@ from enum import Flag, auto
 from pathlib import Path
 from shutil import copyfile
 from tempfile import NamedTemporaryFile
+from heapq import merge
 from datetime import datetime, time, timedelta
 from collections.abc import Iterable, Reversible
 from .exceptions import ProgrammingError
@@ -13,8 +14,8 @@ from .exceptions import ProgrammingError
 class DriverAccessType(Flag):
     APPEND = auto()
     READ = auto()
-    _WRITE_FULL = auto()
-    WRITE = APPEND | _WRITE_FULL
+    _OVERWRITE = auto()
+    WRITE = APPEND | _OVERWRITE
 
     @classmethod
     def file_mode(cls, flag):
@@ -74,7 +75,9 @@ class DirectoryDriver:
                 f"{self} is not opened in a way that supports appending."
             )
 
-        fp = self._shard_stream(tick.date(), DriverAccessType.APPEND, create=True)
+        shard_path = self._shard_path(tick.date())
+
+        fp = self._shard_stream(shard_path, DriverAccessType.APPEND, create=True)
         fp.write(self._format_line(tick, data))
 
     def insert(self, tick, data):
@@ -92,9 +95,10 @@ class DirectoryDriver:
             )
 
         tick_date = tick.date()
+        shard_path = self._shard_path(tick_date)
 
         fp_existing, fp_temp = self._shard_stream_with_tmp_buffer(
-            tick_date,
+            shard_path,
             DriverAccessType.READ,  # Only read because we use a temporary write buffer instead.
             create=True,
         )
@@ -106,8 +110,8 @@ class DirectoryDriver:
         pivot_time = tick.time()
         pivot_passed = False
 
-        for line in self._read_raw_lines(fp_existing):
-            if pivot_passed or self._is_meta_line(line):
+        for line in self._read_lines(fp_existing):
+            if pivot_passed:
                 # Just copy the line directly.
                 fp_temp.file.write(line + "\n")
                 continue
@@ -127,11 +131,79 @@ class DirectoryDriver:
             fp_temp.file.write(insert_line)
 
         # Substitute the shard with the temporary buffer.
-        self._shard_stream_replace_cache(
-            fp_existing, fp_temp, self._shard_path(tick_date)
-        )
+        self._shard_stream_replace_cache(fp_existing, fp_temp, shard_path)
         # Delete the temporary file.
         fp_temp.close()
+
+    def _sort_shard(self, shard_path):
+        """Sort day file.
+
+        This works best for almost-sorted files. The algorithm is essentially a memory-efficient
+        heapsort.
+        """
+        if DriverAccessType.WRITE not in self.access_type:
+            # Incorrect access type for this driver.
+            raise ProgrammingError(
+                f"{self} is not opened in a way that supports writing."
+            )
+
+        # Open a temporary file to use for the sorted result.
+        fp_existing, fp_temp = self._shard_stream_with_tmp_buffer(
+            shard_path,
+            DriverAccessType.READ,  # Only read because we use a temporary write buffer instead.
+            create=False,
+        )
+
+        # Ensure buffered data is written.
+        fp_existing.flush()
+
+        def subsort_file(fp):
+            """Sort a file using heapsort.
+
+            Returns a list of sorted, open temporary file pointers.
+            """
+            lines = self._read_lines(fp)
+
+            try:
+                line = next(lines)
+            except StopIteration:
+                # There are no lines in this file, so there's nothing to do.
+                return []
+
+            sub_fp_sorted = NamedTemporaryFile(
+                mode="w", prefix=fp_existing.name, dir=str(shard_path.parent)
+            )
+            sub_fp_unsorted = NamedTemporaryFile(
+                mode="w", prefix=fp_existing.name, dir=str(shard_path.parent)
+            )
+
+            # The first line is always assumed to be sorted.
+            last_time, line_data = self._parse_line_time(line)
+            sub_fp_sorted.write(self._format_line(last_time, line_data))
+
+            for line in lines:
+                line_time, line_data = self._parse_line_time(line)
+                target = sub_fp_sorted if line_time > last_time else sub_fp_unsorted
+                target.write(self._format_line(line_time, line_data))
+                last_time = line_time
+
+            # Sort unsorted heap and chain results into one list.
+            return [sub_fp_sorted] + subsort_file(sub_fp_unsorted)
+
+        # Get sorted subfile pointers.
+        sorted_subfiles = subsort_file(fp_existing)
+
+        # Merge the sorted subfiles and write to buffer.
+        merged_lines = merge(sorted_subfiles)
+        fp_temp.writelines(merged_lines)
+
+        # Substitute the shard with the temporary buffer.
+        self._shard_stream_replace_cache(fp_existing, fp_temp, shard_path)
+
+        # Delete the temporary files.
+        fp_temp.close()
+        for tmp_file in sorted_subfiles:
+            tmp_file.close()
 
     def _format_line(self, tick, data):
         return " ".join([str(tick.time())] + self._format_data(data)) + "\n"
@@ -145,10 +217,7 @@ class DirectoryDriver:
             self.path / f"{date.year:04d}" / f"{date.month:02d}" / f"{date.day:02d}.txt"
         )
 
-    def _is_meta_line(self, line):
-        return not line or line.strip().startswith("#")
-
-    def _read_raw_lines(self, fp, reverse=False, buf_size=8192):
+    def _read_lines(self, fp, reverse=False, buf_size=8192):
         """Memory-efficient, reversible line reader.
 
         Based on flyingcircus.readline.
@@ -194,20 +263,17 @@ class DirectoryDriver:
             mask = slice(0, -1, 1) if not reverse else slice(-1, 0, -1)
 
             for line in lines[mask]:
-                yield line
+                if line:  # Ignores empty lines.
+                    yield line
 
-        yield remainder
-
-    def _read_lines(self, *args, **kwargs):
-        for line in self._read_raw_lines(*args, **kwargs):
-            if self._is_meta_line(line):
-                continue
-
-            yield line
+        if remainder:  # Ignores empty last line.
+            yield remainder
 
     def _parse_lines(self, shard_date, start, stop, reverse=False):
+        shard_path = self._shard_path(shard_date)
+
         try:
-            fp = self._shard_stream(shard_date, DriverAccessType.READ)
+            fp = self._shard_stream(shard_path, DriverAccessType.READ)
         except FileNotFoundError:
             # No file, so nothing to read.
             return
@@ -235,7 +301,7 @@ class DirectoryDriver:
         assert len(pieces) >= 2
         return time.fromisoformat(f"{pieces[0]}"), pieces[1:]
 
-    def _shard_stream(self, shard_date, mode=DriverAccessType.READ, create=False):
+    def _shard_stream(self, shard_path, mode=DriverAccessType.READ, create=False):
         if not self._is_open:
             raise ProgrammingError(
                 f"{self} is not open. Data can only be queried when the driver is open and in read "
@@ -243,7 +309,6 @@ class DirectoryDriver:
             )
 
         file_mode = DriverAccessType.file_mode(mode)
-        shard_path = self._shard_path(shard_date)
 
         if shard_path in self._file_cache:
             if self._file_cache[shard_path].mode == file_mode:
@@ -260,17 +325,16 @@ class DirectoryDriver:
 
         return self._file_cache[shard_path]
 
-    def _shard_stream_with_tmp_buffer(self, shard_date, *args, **kwargs):
+    def _shard_stream_with_tmp_buffer(self, shard_path, *args, **kwargs):
         """Get two shard streams for a given date: the real one, and a temporary buffer.
 
         The real shard stream is the same one returned by :class:`._shard_stream`. The temporary one
         has the same path and filename except with ".tmp" appended. The temporary buffer is
         write-only. Once closed, the temporary file is deleted.
         """
-        real_path = self._shard_path(shard_date)
-        fp_real = self._shard_stream(shard_date, *args, **kwargs)
+        fp_real = self._shard_stream(shard_path, *args, **kwargs)
         fp_temp = NamedTemporaryFile(
-            mode="w", prefix=real_path.name, dir=str(real_path.parent)
+            mode="w", prefix=shard_path.name, dir=str(shard_path.parent)
         )
 
         return fp_real, fp_temp
