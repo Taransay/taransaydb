@@ -57,6 +57,10 @@ class DirectoryDriver:
         self._file_cache = {}
         self._is_open = False
 
+    @property
+    def path(self):
+        return self._path
+
     def open(self):
         self._is_open = True
 
@@ -222,10 +226,6 @@ class DirectoryDriver:
 
     def _format_line(self, tick_time, data):
         return " ".join([str(tick_time)] + self._format_data(data)) + "\n"
-
-    @property
-    def path(self):
-        return self._path
 
     def _shard_path(self, date):
         return (
