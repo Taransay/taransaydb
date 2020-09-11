@@ -25,7 +25,7 @@ def test_read_not_allowed_in_write_context(float_device, faker):
 
     with float_device.writer() as driver:
         with pytest.raises(
-            ProgrammingError, match=r"not opened in a way that supports reading"
+            ProgrammingError, match=r"not opened in a way that supports READ"
         ):
             driver.query_interval(query_datetime, query_datetime + timedelta(seconds=1))
 
@@ -35,6 +35,6 @@ def test_append_not_allowed_in_read_context(float_device, faker):
 
     with float_device.reader() as driver:
         with pytest.raises(
-            ProgrammingError, match=r"not opened in a way that supports appending"
+            ProgrammingError, match=r"not opened in a way that supports APPEND"
         ):
             driver.append(append_datetime, [faker.pyfloat()])

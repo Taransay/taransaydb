@@ -5,9 +5,30 @@ from enum import Flag, auto
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from heapq import merge
+from functools import wraps
 from datetime import datetime, time, timedelta
 from collections.abc import Iterable, Reversible
 from .exceptions import ProgrammingError
+
+
+def requires_access_type(access_type):
+    """Check that the driver is opened in correct access mode before executing wrapped method."""
+
+    def check_required_access_type(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Throw an error if the driver is not opened in the correct mode...
+            if access_type not in self.access_type:
+                raise ProgrammingError(
+                    f"{self} is not opened in a way that supports {access_type.name}."
+                )
+
+            # ...otherwise call the intended function.
+            return func(self, *args, **kwargs)
+
+        return wrapper
+
+    return check_required_access_type
 
 
 class DriverAccessType(Flag):
@@ -49,6 +70,7 @@ class DirectoryDriver:
         for shard in self._file_cache.values():
             shard.flush()
 
+    @requires_access_type(DriverAccessType.READ)
     def query_interval(self, start, stop):
         """Query data between start and stop.
 
@@ -59,26 +81,15 @@ class DirectoryDriver:
         Queries with the same start and stop values always return an empty result, even if a data
         point lies exactly at that time.
         """
-        if DriverAccessType.READ not in self.access_type:
-            # Incorrect access type for this driver.
-            raise ProgrammingError(
-                f"{self} is not opened in a way that supports reading."
-            )
-
         return Cursor.from_range(self, start, stop)
 
+    @requires_access_type(DriverAccessType.APPEND)
     def append(self, tick, data):
-        if DriverAccessType.APPEND not in self.access_type:
-            # Incorrect access type for this driver.
-            raise ProgrammingError(
-                f"{self} is not opened in a way that supports appending."
-            )
-
         shard_path = self._shard_path(tick.date())
-
         fp = self._shard_stream(shard_path, DriverAccessType.APPEND, create=True)
         fp.write(self._format_line(tick.time(), data))
 
+    @requires_access_type(DriverAccessType.WRITE)
     def insert(self, tick, data):
         """Insert data in order.
 
@@ -87,12 +98,6 @@ class DirectoryDriver:
         If you know your `tick` is later than the last reading in the database, then
         :class:`.append` is much quicker.
         """
-        if DriverAccessType.WRITE not in self.access_type:
-            # Incorrect access type for this driver.
-            raise ProgrammingError(
-                f"{self} is not opened in a way that supports writing."
-            )
-
         tick_date = tick.date()
         shard_path = self._shard_path(tick_date)
 
@@ -132,6 +137,7 @@ class DirectoryDriver:
         # Substitute the shard with the temporary buffer.
         self._shard_replace(fp_existing, fp_temp)
 
+    @requires_access_type(DriverAccessType.WRITE)
     def sort(self):
         for shard_path in self._shard_paths():
             self._sort_shard(shard_path)
@@ -145,12 +151,6 @@ class DirectoryDriver:
         Like all heapsorts, this is not stable. Measurements made at identical times may be
         swapped in the sorted file.
         """
-        if DriverAccessType.WRITE not in self.access_type:
-            # Incorrect access type for this driver.
-            raise ProgrammingError(
-                f"{self} is not opened in a way that supports writing."
-            )
-
         # Open a temporary file to use for the sorted result.
         fp_existing, fp_temp = self._shard_stream_with_tmp_buffer(
             shard_path,
