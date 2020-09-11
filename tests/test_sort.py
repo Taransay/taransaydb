@@ -7,14 +7,17 @@ def test_sort(float_device, faker):
 
     # Generate readings with randomly ordered datetimes.
     data = []
-    for _ in range(1000):
+    for _ in range(100):
         tick = faker.date_time_between(start, stop)
-        readings = faker.pyfloat()
+        readings = [faker.pyfloat()]
         data.append([tick, readings])
+
+    tmp = float_device.path / "tmpsort.dat"
+    tmp.parent.mkdir(parents=True)
 
     with float_device.writer() as driver:
         for tick, readings in data:
-            driver.append(tick, [readings])
+            driver.append(tick, readings)
 
         driver.sort()
 

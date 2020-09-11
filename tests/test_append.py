@@ -16,4 +16,4 @@ def test_append(float_device, faker):
             )
         )
 
-    assert result == [[append_datetime] + append_data]
+    assert result == [[append_datetime, append_data]]

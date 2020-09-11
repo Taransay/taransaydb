@@ -16,4 +16,4 @@ def test_insert(float_device, faker):
         # Query to 1 second after so the data point is returned.
         result = list(driver.query_interval(tick1, tick2 + timedelta(seconds=1)))
 
-    assert result == [[tick1] + data, [insert_datetime] + data, [tick2] + data]
+    assert result == [[tick1, data], [insert_datetime, data], [tick2, data]]

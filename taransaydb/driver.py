@@ -141,6 +141,9 @@ class DirectoryDriver:
 
         This works best for almost-sorted files. The algorithm is essentially a memory-efficient
         heapsort.
+
+        Like all heapsorts, this is not stable. Measurements made at identical times may be
+        swapped in the sorted file.
         """
         if DriverAccessType.WRITE not in self.access_type:
             # Incorrect access type for this driver.
@@ -157,8 +160,6 @@ class DirectoryDriver:
 
         # Ensure buffered data is written.
         fp_existing.flush()
-
-        heap_paths = []
 
         def subsort_file(fp):
             """Sort a file using heapsort.
@@ -196,19 +197,19 @@ class DirectoryDriver:
 
                     target.write(self._format_line(line_time, line_data))
 
-                heap_paths.append(Path(sub_fp_sorted.name))
+                sorted_paths = [Path(sub_fp_sorted.name)]
 
                 if has_unsorted:
-                    subsort_file(sub_fp_unsorted)
+                    # Sort the unsorted heap.
+                    sorted_paths.extend(subsort_file(sub_fp_unsorted))
 
-        subsort_file(fp_existing)
+                return sorted_paths
 
+        heap_paths = subsort_file(fp_existing)
         # Open the heap files for reading.
         heap_files = [heap_path.open() for heap_path in heap_paths]
-
         # Merge the sorted subfiles and write to buffer.
         merged_lines = merge(*heap_files, key=self._parse_line_time)
-
         fp_temp.writelines(merged_lines)
 
         # Delete the temporary files.
@@ -216,7 +217,7 @@ class DirectoryDriver:
             heap_file.close()
             heap_path.unlink()
 
-        # Overwrite the unsorted shard with the temporary buffer.
+        # Overwrite the unsorted shard with the buffer.
         self._shard_replace(fp_existing, fp_temp)
 
     def _format_line(self, tick_time, data):
@@ -310,13 +311,13 @@ class DirectoryDriver:
 
             if (reverse and line_time < stop) or (not reverse and line_time >= start):
                 line_datetime = datetime.combine(shard_date, line_time)
-                yield [line_datetime] + self._parse_data(line_data)
+                yield [line_datetime, self._parse_data(line_data)]
 
     def _parse_line_time(self, line):
         """Parse line time and return it along with the raw line data."""
         pieces = line.split()
         assert len(pieces) >= 2
-        return time.fromisoformat(f"{pieces[0]}"), pieces[1:]
+        return time.fromisoformat(pieces[0]), pieces[1:]
 
     def _shard_stream(self, shard_path, mode=DriverAccessType.READ, create=False):
         if not self._is_open:
