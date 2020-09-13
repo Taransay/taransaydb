@@ -12,11 +12,11 @@ class Device:
 
     @contextmanager
     def reader(self):
-        yield from self._yield_driver_with_mode(DriverAccessType.READ)
+        return self._yield_driver_with_mode(DriverAccessType.READ)
 
     @contextmanager
     def writer(self):
-        yield from self._yield_driver_with_mode(DriverAccessType.WRITE)
+        return self._yield_driver_with_mode(DriverAccessType.WRITE)
 
     def _yield_driver_with_mode(self, mode):
         ctx_driver = DirectoryDriver(self.path, mode, self.format_data, self.parse_data)

@@ -32,6 +32,8 @@ def requires_access_type(access_type):
 
 
 class DriverAccessType(Flag):
+    """Flag determining the file mode for a driver."""
+
     APPEND = auto()
     READ = auto()
     _OVERWRITE = auto()
@@ -39,6 +41,7 @@ class DriverAccessType(Flag):
 
     @classmethod
     def file_mode(cls, flag):
+        """Map the specified flag to a Python file mode."""
         access_map = {
             cls.APPEND: "a",
             cls.READ: "r",
@@ -49,6 +52,8 @@ class DriverAccessType(Flag):
 
 
 class DirectoryDriver:
+    """Directory-based database driver."""
+
     def __init__(self, path, access_type, format_fnc, parse_fnc):
         self._path = Path(path)
         self.access_type = access_type
@@ -84,11 +89,25 @@ class DirectoryDriver:
 
         Queries with the same start and stop values always return an empty result, even if a data
         point lies exactly at that time.
+
+        Returns
+        -------
+        :class:`.Cursor`
+            The result cursor from which to read the query results.
         """
         return Cursor.from_range(self, start, stop)
 
     @requires_access_type(DriverAccessType.APPEND)
     def append(self, tick, data):
+        """Append data to the end of the corresponding day file.
+
+        Parameters
+        ----------
+        tick : :py:class:`datetime.datetime`
+            The time the data was recorded.
+        data : sequence
+            A sequence of data to store.
+        """
         shard_path = self._shard_path(tick.date())
         fp = self._shard_stream(shard_path, DriverAccessType.APPEND, create=True)
         fp.write(self._format_line(tick.time(), data))
@@ -99,8 +118,15 @@ class DirectoryDriver:
 
         This assumes the data is already ordered.
 
-        If you know your `tick` is later than the last reading in the database, then
-        :class:`.append` is much quicker.
+        If you know your `tick` is later than the last reading in the corresponding day file, then
+        you should use the much quicker :meth:`~DirectoryDriver.append` method.
+
+        Parameters
+        ----------
+        tick : :py:class:`datetime.datetime`
+            The time the data was recorded.
+        data : sequence
+            A sequence of data to store.
         """
         tick_date = tick.date()
         shard_path = self._shard_path(tick_date)
@@ -124,7 +150,7 @@ class DirectoryDriver:
                 fp_temp.file.write(line + "\n")
                 continue
 
-            line_time, line_data = self._parse_line_time(line)
+            line_time, _ = self._parse_line_time(line)
 
             if line_time > pivot_time:
                 # The insert data should be inserted before this line.
@@ -143,6 +169,7 @@ class DirectoryDriver:
 
     @requires_access_type(DriverAccessType.WRITE)
     def sort(self):
+        """Sort every file in the database in ascending order of time."""
         for shard_path in self._shard_paths():
             self._sort_shard(shard_path)
 
@@ -152,8 +179,8 @@ class DirectoryDriver:
         This works best for almost-sorted files. The algorithm is essentially a memory-efficient
         heapsort.
 
-        Like all heapsorts, this is not stable. Measurements made at identical times may be
-        swapped in the sorted file.
+        Like all heapsorts, this is not stable. Measurements made at identical times may be swapped
+        in the sorted file.
         """
         # Open a temporary file to use for the sorted result.
         fp_existing, fp_temp = self._shard_stream_with_tmp_buffer(
@@ -390,6 +417,8 @@ class DirectoryDriver:
 
 
 class Cursor(Reversible, Iterable):
+    """Query result cursor."""
+
     def __init__(self, driver):
         self._driver = driver
         self.query_intervals = {}
