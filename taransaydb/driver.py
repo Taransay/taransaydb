@@ -64,18 +64,31 @@ class DirectoryDriver:
 
     @property
     def path(self):
+        """Top level directory for this driver instance.
+
+        Returns
+        -------
+        :py:class:`pathlib.Path`
+            The path.
+        """
         return self._path
 
     def open(self):
+        """Open the database."""
         self._is_open = True
 
     def close(self):
+        """Close the database.
+
+        This closes any open file objects.
+        """
         for shard in self._file_cache.values():
             shard.close()
 
         self._is_open = False
 
     def flush(self):
+        """Perform any pending write operations on open file objects."""
         for shard in self._file_cache.values():
             shard.flush()
 
@@ -262,7 +275,8 @@ class DirectoryDriver:
     def _shard_paths(self):
         return self.path.glob("**/*.txt")
 
-    def _read_lines(self, fp, reverse=False, buf_size=8192):
+    @staticmethod
+    def _read_lines(fp, reverse=False, buf_size=8192):
         """Memory-efficient, reversible line reader.
 
         Based on flyingcircus.readline.
@@ -279,8 +293,8 @@ class DirectoryDriver:
 
                 if not block:
                     break
-                else:
-                    yield block
+
+                yield block
 
         def reversed_blocks(fp):
             offset = fp.seek(0, os.SEEK_END)
@@ -340,7 +354,8 @@ class DirectoryDriver:
                 line_datetime = datetime.combine(shard_date, line_time)
                 yield [line_datetime, self._parse_data(line_data)]
 
-    def _parse_line_time(self, line):
+    @staticmethod
+    def _parse_line_time(line):
         """Parse line time and return it along with the raw line data."""
         pieces = line.split()
         assert len(pieces) >= 2
@@ -425,6 +440,7 @@ class Cursor(Reversible, Iterable):
 
     @classmethod
     def from_range(cls, driver, start, stop):
+        """Build a Cursor from a driver and datetime interval."""
         cursor = cls(driver)
 
         if start > stop:
