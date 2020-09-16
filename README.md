@@ -37,7 +37,8 @@ In return you get:
 - *An easy dependency.* TaransayDB itself has no dependencies other than Python 3.7, and the licence
   is the permissive LGPL.
 - *Small memory footprint.* All search and sort operations use iterators and generators to avoid
-  having to load large files into memory, making TaransayDB suitable for use on embedded devices.
+  having to load large files into memory, making TaransayDB suitable for use on embedded devices
+  and for streaming over a network.
 - *Human-readable data.* Want to quickly plot something with another programming language? Just load
   the relevant whitespace-separated files. Want to edit a data point? Just open up its file in your
   favourite text editor and change it. Want to generate a diff between two days? Just load the files
