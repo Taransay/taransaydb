@@ -8,9 +8,10 @@ from .driver import DirectoryDriver, DriverAccessType
 class Device:
     """A wrapper for a named collection of related data within a database."""
 
-    def __init__(self, database, name):
+    def __init__(self, database, name, encoding="UTF-8"):
         self.database = Path(database)
         self.name = str(name)
+        self.encoding = encoding
 
     @property
     def path(self):
@@ -53,7 +54,24 @@ class Device:
         return f"{self.__class__.__name__}({self.name})"
 
     def _yield_driver_with_mode(self, mode):
-        ctx_driver = DirectoryDriver(self.path, mode, self.format_data, self.parse_data)
+        ctx_driver = DirectoryDriver(
+            self.path, mode, self.encoding, self.format_data, self.parse_data
+        )
         ctx_driver.open()
         yield ctx_driver
         ctx_driver.close()
+
+
+class FloatDevice(Device):
+    """Device for storing floats.
+
+    The encoding used is iso-8859-1 (latin-1), which due to only supporting ASCII characters
+    provides very fast (sometimes orders of magnitude faster than unicode) read performance.
+    """
+
+    def __init__(self, database, name):
+        super().__init__(database, name, encoding="iso-8859-1")
+
+    def parse_data(self, data):
+        """Parse the specified data as floats."""
+        return [float(value) for value in data]

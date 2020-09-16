@@ -54,9 +54,10 @@ class DriverAccessType(Flag):
 class DirectoryDriver:
     """Directory-based database driver."""
 
-    def __init__(self, path, access_type, format_fnc, parse_fnc):
+    def __init__(self, path, access_type, encoding, format_fnc, parse_fnc):
         self._path = Path(path)
         self.access_type = access_type
+        self.encoding = encoding
         self._format_data = format_fnc
         self._parse_data = parse_fnc
         self._file_cache = {}
@@ -218,11 +219,13 @@ class DirectoryDriver:
                 prefix=f"{fp_existing.name}_sorted",
                 dir=str(shard_path.parent),
                 delete=False,
+                encoding=self.encoding,
             ) as sub_fp_sorted, NamedTemporaryFile(
                 mode="r+",
                 prefix=f"{fp_existing.name}_unsorted",
                 dir=str(shard_path.parent),
                 delete=True,
+                encoding=self.encoding,
             ) as sub_fp_unsorted:
                 last_time = None
                 has_unsorted = False
@@ -251,7 +254,9 @@ class DirectoryDriver:
 
         heap_paths = subsort_file(fp_existing)
         # Open the heap files for reading.
-        heap_files = [heap_path.open() for heap_path in heap_paths]
+        heap_files = [
+            heap_path.open(encoding=self.encoding) for heap_path in heap_paths
+        ]
         # Merge the sorted subfiles and write to buffer.
         merged_lines = merge(*heap_files, key=self._parse_line_time)
         fp_temp.writelines(merged_lines)
@@ -381,7 +386,9 @@ class DirectoryDriver:
             shard_path.parent.mkdir(exist_ok=True, parents=True)
             shard_path.touch(exist_ok=False)
 
-        self._file_cache[shard_path] = shard_path.open(file_mode)
+        self._file_cache[shard_path] = shard_path.open(
+            file_mode, encoding=self.encoding
+        )
 
         return self._file_cache[shard_path]
 
@@ -425,7 +432,9 @@ class DirectoryDriver:
         replacement_path.rename(cached_path)
 
         # Re-open with the original mode.
-        self._file_cache[cached_path] = cached_path.open(fp_cached.mode)
+        self._file_cache[cached_path] = cached_path.open(
+            fp_cached.mode, encoding=self.encoding
+        )
 
     def __str__(self):
         return f"{self.__class__.__name__}(access_type={self.access_type})"

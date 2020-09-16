@@ -1,5 +1,5 @@
 """Taransay database library."""
 
-from .device import Device
+from .device import Device, FloatDevice
 
-ALL = (Device,)
+ALL = (Device, FloatDevice)
